@@ -1,0 +1,100 @@
+# Onyx reverse proxy for Railway, based on upstream deployment/data/nginx/app.conf.template
+# and mcp.conf.inc.template (v5.1.3). Differences: listens on $PORT (IPv4 + IPv6), resolves
+# the private service names at request time (so nginx starts before the other services exist),
+# and forwards the original https scheme from Railway's edge.
+server_tokens off;
+
+log_format custom_main '$remote_addr - $remote_user [$time_local] "$request" '
+                '$status $body_bytes_sent "$http_referer" '
+                '"$http_user_agent" "$http_x_forwarded_for" '
+                'rt=$request_time';
+
+# Railway private DNS answers with IPv4 and IPv6; the Onyx Python services bind IPv4 (0.0.0.0).
+resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Railway's edge terminates TLS and sends X-Forwarded-Proto: https.
+map $http_x_forwarded_proto $onyx_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+map $onyx_forwarded_proto $onyx_forwarded_port {
+    https   443;
+    default $server_port;
+}
+
+server {
+    listen ${PORT} default_server;
+    listen [::]:${PORT} default_server;
+
+    client_max_body_size 5G;
+    access_log /var/log/nginx/access.log custom_main;
+
+    set $onyx_api http://${ONYX_BACKEND_API_HOST}:8080;
+    set $onyx_web http://${ONYX_WEB_SERVER_HOST}:3000;
+    set $onyx_mcp http://${ONYX_MCP_SERVER_HOST}:8090;
+
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $onyx_forwarded_proto;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $onyx_forwarded_port;
+    proxy_set_header Host $http_host;
+    proxy_http_version 1.1;
+    proxy_redirect off;
+    proxy_connect_timeout ${NGINX_PROXY_CONNECT_TIMEOUT}s;
+    proxy_send_timeout ${NGINX_PROXY_SEND_TIMEOUT}s;
+    proxy_read_timeout ${NGINX_PROXY_READ_TIMEOUT}s;
+
+    # Health probe answered by nginx itself (Railway health check).
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # MCP OAuth metadata and callback (upstream mcp.conf.inc.template).
+    location ~ ^/\.well-known/oauth-authorization-server(/.*)?$ {
+        rewrite ^ /oauth-provider/metadata break;
+        proxy_pass $onyx_api;
+    }
+    location ~ ^/\.well-known/oauth-protected-resource(/.*)?$ {
+        proxy_pass $onyx_mcp;
+    }
+    location = /mcp/oauth/callback {
+        proxy_pass $onyx_web;
+    }
+    location ~ ^/mcp(/.*)?$ {
+        proxy_connect_timeout 30s;
+        rewrite ^/mcp(/.*)$ $1 break;
+        rewrite ^/mcp/?$ / break;
+        proxy_pass $onyx_mcp;
+    }
+
+    # SAML and SCIM are API routes.
+    location ~ ^/auth/saml(/.*)?$ {
+        proxy_buffering off;
+        proxy_pass $onyx_api;
+    }
+    location ~ ^/scim(/.*)?$ {
+        proxy_buffering off;
+        proxy_pass $onyx_api;
+    }
+
+    # /api/* goes to the API server without the /api prefix.
+    location ~ ^/(api|openapi.json)(/.*)?$ {
+        rewrite ^/api(/.*)$ $1 break;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_pass $onyx_api;
+    }
+
+    location / {
+        proxy_pass $onyx_web;
+    }
+}
