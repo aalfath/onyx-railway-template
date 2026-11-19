@@ -5,7 +5,7 @@ set -e
 DATA=/usr/share/opensearch/data
 mkdir -p "$DATA"
 chown -R 1000:1000 "$DATA"
-export OPENSEARCH_JAVA_OPTS="${OPENSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}"
+export OPENSEARCH_JAVA_OPTS="${OPENSEARCH_JAVA_OPTS:--Xms2g -Xmx2g}"
 export DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI="${DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI:-true}"
 export HOME=/usr/share/opensearch
 cd /usr/share/opensearch

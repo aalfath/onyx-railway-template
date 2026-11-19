@@ -1,6 +1,6 @@
 #!/bin/sh
 # Onyx API server start script for Railway.
-# Waits for Postgres, Redis and OpenSearch, runs the Alembic migrations (upstream does
+# Waits for Postgres, Redis, OpenSearch and both model servers, runs the Alembic migrations (upstream does
 # the same in its compose command), then serves on port 8080.
 set -e
 
@@ -33,6 +33,10 @@ PY
 wait_tcp Postgres "${POSTGRES_HOST:-127.0.0.1}" "${POSTGRES_PORT:-5432}"
 wait_tcp Redis "${REDIS_HOST:-localhost}" "${REDIS_PORT:-6379}"
 wait_tcp OpenSearch "${OPENSEARCH_HOST:-localhost}" "${OPENSEARCH_REST_API_PORT:-9200}"
+# The API server embeds a test query with the inference model server and asks the indexing
+# model server for its GPU status during startup, so both have to be reachable first.
+wait_tcp "inference model server" "${MODEL_SERVER_HOST:-localhost}" "${MODEL_SERVER_PORT:-9000}"
+wait_tcp "indexing model server" "${INDEXING_MODEL_SERVER_HOST:-${MODEL_SERVER_HOST:-localhost}}" "${INDEXING_MODEL_SERVER_PORT:-9000}"
 
 cd /app
 echo "railway: running database migrations (alembic upgrade head)"
