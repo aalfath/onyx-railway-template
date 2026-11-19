@@ -50,8 +50,9 @@ server {
     proxy_send_timeout ${NGINX_PROXY_SEND_TIMEOUT}s;
     proxy_read_timeout ${NGINX_PROXY_READ_TIMEOUT}s;
 
-    # Health probe answered by nginx itself (Railway health check).
-    location = /nginx-health {
+    # Health probes answered by nginx itself. Railway's health check uses /healthz
+    # (Railway rejects paths with a hyphen); /nginx-health is upstream's name.
+    location ~ ^/(healthz|nginx-health)$ {
         access_log off;
         default_type text/plain;
         return 200 "ok\n";
